@@ -41,8 +41,25 @@ def get_projections(images):
 
     return p_matrices
 
+def setup_voxels(size, center=(0,0,0), voxels_per_side=10):
+    min_bound = np.array(center) - np.array(size)/2
+    max_bound = np.array(center) + np.array(size)/2
+    grid = np.linspace(min_bound, max_bound, voxels_per_side)
+
+    voxel_dtype = np.dtype([
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("r", "u1"), ("g", "u1"), ("b", "u1")
+    ])
+
+    voxels_out = np.zeros([voxels_per_side]*3, dtype=voxel_dtype)
+    voxels_out["x"] = grid[:, 0].reshape((voxels_per_side, 1, 1))
+    voxels_out["y"] = grid[:, 1].reshape((1, voxels_per_side, 1))
+    voxels_out["z"] = grid[:, 2].reshape((1, 1, voxels_per_side))
+    return voxels_out
+
 print(load_images(imgs))
 print(get_silhouettes(imgs))
 np.set_printoptions(suppress=True)
 print(get_projections(imgs))
+print(setup_voxels((5,5,5))[0, 1, 2])
 
