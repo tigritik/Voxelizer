@@ -83,7 +83,6 @@ def construct_model(voxels, silhouettes, projections):
             except IndexError:
                 break
         if images_matched == n:
-            #voxels[i, j, k][["r", "g", "b"]] = (255, 255, 255)
             voxels[i, j, k]["r"] = 255
             voxels[i, j, k]["g"] = 255
             voxels[i, j, k]["b"] = 255
@@ -91,10 +90,29 @@ def construct_model(voxels, silhouettes, projections):
 
     return count
 
+def write_ply(voxels, file_name, count):
+    with open(file_name, mode='w') as f:
+        # Write header
+        f.write("ply\n")
+        f.write("format ascii 1.0\n")
+        f.write(f"element vertex {count}\n")
+        f.write("property float x\n")
+        f.write("property float y\n")
+        f.write("property float z\n")
+        f.write("property uchar red\n")
+        f.write("property uchar green\n")
+        f.write("property uchar blue\n")
+        f.write("end_header\n")
+
+        # Write vertex data
+        for voxel in voxels.reshape(-1):
+            if (voxel["r"], voxel["g"], voxel["b"]) != (0, 0, 0):
+                f.write(f"{voxel['x']} {voxel['y']} {voxel['z']} {voxel['r']} {voxel['g']} {voxel['b']}\n")
+
 sil = get_silhouettes(imgs)
 np.set_printoptions(suppress=True)
 proj = get_projections(imgs)
-v = setup_voxels((5,5,5), voxels_per_side=10)
-construct_model(v, sil, proj)
-print(v)
+v = setup_voxels((5,5,5), voxels_per_side=100)
+v_occupied = construct_model(v, sil, proj)
+write_ply(v, "../out/test.ply", v_occupied)
 
