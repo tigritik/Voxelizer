@@ -130,7 +130,8 @@ def compute_voxel_faces(voxels, i, j, k):
             neighbor_center = np.array([v["x"], v["y"], v["z"]])
             face_center = (center+neighbor_center) / 2
             exposed_faces.append(
-                (face_center[0], face_center[1], face_center[2], 255, 255, 255)
+                (face_center[0], face_center[1], face_center[2],
+                 voxels[i,j,k]["r"], voxels[i,j,k]["g"], voxels[i,j,k]["b"])
             )
 
     return exposed_faces
@@ -171,6 +172,22 @@ def pad_with_empty(voxels):
     padded_voxels[1:-1, 1:-1, 1:-1] = voxels
     return padded_voxels
 
+def compute_spatial_gradient(voxels):
+    # compute bounds
+    min_bound = tuple(voxels[0, 0, 0][["x", "y", "z"]])
+    max_bound = tuple(voxels[-1, -1, -1][["x", "y", "z"]])
+    # make the gradient
+    for i, j, k in np.ndindex(voxels.shape):
+        v = voxels[i, j, k]
+        # get coordinates
+        x, y, z = v["x"], v["y"], v["z"]
+        # set colors if occupied
+        if (v["r"], v["g"], v["b"]) != (0, 0, 0):
+            voxels[i, j, k]["r"] = 255 * (x-min_bound[0]) / (max_bound[0]-min_bound[0])
+            voxels[i, j, k]["g"] = 255 * (y-min_bound[1]) / (max_bound[1]-min_bound[1])
+            voxels[i, j, k]["b"] = 255 * (z-min_bound[2]) / (max_bound[2]-min_bound[2])
+
+
 def write_ply(voxels, file_name, count):
     with open(file_name, mode='w') as f:
         # Write header
@@ -196,6 +213,7 @@ proj = get_projections(imgs)
 v = setup_voxels((5,5,5), voxels_per_side=100)
 v_occupied = construct_model(v, sil, proj)
 v_padded = pad_with_empty(v)
+compute_spatial_gradient(v_padded)
 faces, surface_count, face_count = compute_surface(v_padded)
-write_ply(faces, "../out/surface_faces.ply", face_count)
+write_ply(faces, "../out/spatial_grad.ply", face_count)
 
