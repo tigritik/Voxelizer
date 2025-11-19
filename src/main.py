@@ -41,15 +41,16 @@ def get_projections(images):
 
     return p_matrices
 
+voxel_dtype = np.dtype([
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("r", "u1"), ("g", "u1"), ("b", "u1")
+])
+
 def setup_voxels(size, center=(0,0,0), voxels_per_side=10):
     min_bound = np.array(center) - np.array(size)/2
     max_bound = np.array(center) + np.array(size)/2
-    grid = np.linspace(min_bound, max_bound, voxels_per_side)
-
-    voxel_dtype = np.dtype([
-        ("x", "f4"), ("y", "f4"), ("z", "f4"),
-        ("r", "u1"), ("g", "u1"), ("b", "u1")
-    ])
+    grid = np.linspace(min_bound, max_bound, 2*voxels_per_side+1)[1::2]
+    assert grid.shape[0] == voxels_per_side, "Improper coordinate initialization!"
 
     voxels_out = np.zeros([voxels_per_side]*3, dtype=voxel_dtype)
     voxels_out["x"] = grid[:, 0].reshape((voxels_per_side, 1, 1))
@@ -90,24 +91,26 @@ def construct_model(voxels, silhouettes, projections):
 
     return count
 
-def get_neighbor_offsets():
+def get_neighbor_offsets(voxels, i, j, k):
     for axis in range(3):
         for direction in (-1, 1):
             offset = [0, 0, 0]
             offset[axis] = direction
-            yield tuple(offset)
+            di, dj, dk = offset
+            # make sure the offset lands in bounds
+            if 0 <= i + di < voxels.shape[0] and \
+               0 <= j + dj < voxels.shape[1] and \
+               0 <= k + dk < voxels.shape[2]:
+                    yield di, dj, dk
+            else:
+                continue
 
 def get_occupied_neighbors(voxels, i, j, k):
     count = 0
-    for di, dj, dk in get_neighbor_offsets():
-        # check for out of bounds
-        if 0 <= i+di < voxels.shape[0] and \
-           0 <= j+dj < voxels.shape[1] and \
-           0 <= k+dk < voxels.shape[2]:
-
-            v = voxels[i+di, j+dj, k+dk]
-            if (v["r"], v["g"], v["b"]) != (0, 0, 0):
-                count += 1
+    for di, dj, dk in get_neighbor_offsets(voxels, i, j, k):
+        v = voxels[i+di, j+dj, k+dk]
+        if (v["r"], v["g"], v["b"]) != (0, 0, 0):
+            count += 1
 
     return count
 
@@ -117,8 +120,24 @@ def remove_points(voxels, points):
         voxels[i, j, k]["g"] = 0
         voxels[i, j, k]["b"] = 0
 
+def compute_voxel_faces(voxels, i, j, k):
+    exposed_faces = []
+    for di, dj, dk in get_neighbor_offsets(voxels, i, j, k):
+        v = voxels[i + di, j + dj, k + dk]
+        if (v["r"], v["g"], v["b"]) == (0, 0, 0): # exposed face
+            center = voxels[i, j, k]
+            center = np.array([center["x"], center["y"], center["z"]])
+            neighbor_center = np.array([v["x"], v["y"], v["z"]])
+            face_center = (center+neighbor_center) / 2
+            exposed_faces.append(
+                (face_center[0], face_center[1], face_center[2], 255, 255, 255)
+            )
+
+    return exposed_faces
+
 def compute_surface(voxels):
-    count = 0
+    voxel_count = 0
+    faces_to_render = []
     remove_set = set()
     for i, j, k in np.ndindex(voxels.shape):
         if i % 10 == 0: print(f"{i + 1}/100")
@@ -126,13 +145,31 @@ def compute_surface(voxels):
         neighbors = get_occupied_neighbors(voxels, i, j, k)
         v = voxels[i, j, k]
         if neighbors < 6 and (v["r"], v["g"], v["b"]) != (0, 0, 0): # voxel on surface
-            count += 1
+            voxel_count += 1
+            faces_to_render.extend(compute_voxel_faces(voxels, i, j, k))
         else: # voxel not on surface
             remove_set.add((i, j, k))
 
     # remove voxels not in surface
     remove_points(voxels, remove_set)
-    return count
+    return (
+        np.array(faces_to_render, dtype=voxel_dtype),
+        voxel_count, len(faces_to_render)
+    )
+
+def pad_with_empty(voxels):
+    """Pad voxel grid with empty voxels on all sides"""
+    # compute padded voxel array params
+    lower_corner = np.array(tuple(voxels[0, 0, 0][["x", "y", "z"]]), dtype=float)
+    upper_corner = np.array(tuple(voxels[-1, -1, -1][["x", "y", "z"]]), dtype=float)
+    center = (lower_corner+upper_corner) / 2
+    n = voxels.shape[0]
+    voxel_dims = (upper_corner-lower_corner)/(n-1)
+    # generate padded voxels
+    padded_voxels = setup_voxels(voxel_dims*(n+2), center, n+2)
+    # set the inside voxels to the previous data
+    padded_voxels[1:-1, 1:-1, 1:-1] = voxels
+    return padded_voxels
 
 def write_ply(voxels, file_name, count):
     with open(file_name, mode='w') as f:
@@ -158,6 +195,7 @@ np.set_printoptions(suppress=True)
 proj = get_projections(imgs)
 v = setup_voxels((5,5,5), voxels_per_side=100)
 v_occupied = construct_model(v, sil, proj)
-v_occupied = compute_surface(v)
-write_ply(v, "../out/surface.ply", v_occupied)
+v_padded = pad_with_empty(v)
+faces, surface_count, face_count = compute_surface(v_padded)
+write_ply(faces, "../out/surface_faces.ply", face_count)
 
