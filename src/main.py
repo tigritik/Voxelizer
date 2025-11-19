@@ -90,6 +90,50 @@ def construct_model(voxels, silhouettes, projections):
 
     return count
 
+def get_neighbor_offsets():
+    for axis in range(3):
+        for direction in (-1, 1):
+            offset = [0, 0, 0]
+            offset[axis] = direction
+            yield tuple(offset)
+
+def get_occupied_neighbors(voxels, i, j, k):
+    count = 0
+    for di, dj, dk in get_neighbor_offsets():
+        # check for out of bounds
+        if 0 <= i+di < voxels.shape[0] and \
+           0 <= j+dj < voxels.shape[1] and \
+           0 <= k+dk < voxels.shape[2]:
+
+            v = voxels[i+di, j+dj, k+dk]
+            if (v["r"], v["g"], v["b"]) != (0, 0, 0):
+                count += 1
+
+    return count
+
+def remove_points(voxels, points):
+    for i, j, k in points:
+        voxels[i, j, k]["r"] = 0
+        voxels[i, j, k]["g"] = 0
+        voxels[i, j, k]["b"] = 0
+
+def compute_surface(voxels):
+    count = 0
+    remove_set = set()
+    for i, j, k in np.ndindex(voxels.shape):
+        if i % 10 == 0: print(f"{i + 1}/100")
+        # Check neighboring voxels
+        neighbors = get_occupied_neighbors(voxels, i, j, k)
+        v = voxels[i, j, k]
+        if neighbors < 6 and (v["r"], v["g"], v["b"]) != (0, 0, 0): # voxel on surface
+            count += 1
+        else: # voxel not on surface
+            remove_set.add((i, j, k))
+
+    # remove voxels not in surface
+    remove_points(voxels, remove_set)
+    return count
+
 def write_ply(voxels, file_name, count):
     with open(file_name, mode='w') as f:
         # Write header
@@ -114,5 +158,6 @@ np.set_printoptions(suppress=True)
 proj = get_projections(imgs)
 v = setup_voxels((5,5,5), voxels_per_side=100)
 v_occupied = construct_model(v, sil, proj)
-write_ply(v, "../out/test.ply", v_occupied)
+v_occupied = compute_surface(v)
+write_ply(v, "../out/surface.ply", v_occupied)
 
