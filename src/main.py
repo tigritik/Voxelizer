@@ -15,6 +15,7 @@ imgs = [
 ]
 
 def load_images(file_names):
+    """Load image data from file names"""
     images = []
     for file_name in file_names:
         img = cv2.imread(file_name)
@@ -23,6 +24,7 @@ def load_images(file_names):
     return images
 
 def get_silhouettes(images):
+    """Load silhouette data from image names"""
     silhouettes = []
     for img in images:
         file_name = f"../silhouettes/silh_{img[7:-4]}.pbm"
@@ -32,6 +34,7 @@ def get_silhouettes(images):
     return silhouettes
 
 def get_projections(images):
+    """Load projection matrices from image names"""
     p_matrices = []
     for img in images:
         file_name = f"../calibrations/{img[7:12]}.xml"
@@ -47,6 +50,7 @@ voxel_dtype = np.dtype([
 ])
 
 def setup_voxels(size, center=(0,0,0), voxels_per_side=10):
+    """Setup n * n * n voxel grid of a given size at a center point"""
     min_bound = np.array(center) - np.array(size)/2
     max_bound = np.array(center) + np.array(size)/2
     grid = np.linspace(min_bound, max_bound, 2*voxels_per_side+1)[1::2]
@@ -59,19 +63,22 @@ def setup_voxels(size, center=(0,0,0), voxels_per_side=10):
     return voxels_out
 
 def nearest_neighbor(x, y):
+    """Nearest neighbor interpolation function"""
     return int(np.rint(x)), int(np.rint(y))
 
 def project_voxel(voxel, P, interp=nearest_neighbor):
+    """Project from 3D homogeneous coords to 2D pixel coords"""
     v = np.array([voxel["x"], voxel["y"], voxel["z"], 1])
     proj = P @ v
     return interp(proj[0]/proj[2], proj[1]/proj[2])
 
 def construct_model(voxels, silhouettes, projections):
+    """Construct the visual hull based on image silhouettes"""
     assert len(silhouettes) == len(projections), "Unequal number of silhouettes and projections!"
     n = len(silhouettes)
     count = 0 # count number of voxels that are occupied
     for i, j, k in np.ndindex(voxels.shape):
-        if i % 10 == 0: print(f"{i+1}/100")
+        if i % 10 == 0: print(f"\r{i+1}/{voxels.shape[0]}", end="")
         voxel = voxels[i, j, k]
         images_matched = 0
         for sil, P in zip(silhouettes, projections):
@@ -89,9 +96,11 @@ def construct_model(voxels, silhouettes, projections):
             voxels[i, j, k]["b"] = 255
             count += 1
 
+    print(f"\r{voxels.shape[0]}/{voxels.shape[0]}")
     return count
 
 def get_neighbor_offsets(voxels, i, j, k):
+    """Get list of offsets to voxels that share a face with v[i,j,k]"""
     for axis in range(3):
         for direction in (-1, 1):
             offset = [0, 0, 0]
@@ -106,6 +115,7 @@ def get_neighbor_offsets(voxels, i, j, k):
                 continue
 
 def get_occupied_neighbors(voxels, i, j, k):
+    """Count how many neighbors of v[i,j,k] are occupied"""
     count = 0
     for di, dj, dk in get_neighbor_offsets(voxels, i, j, k):
         v = voxels[i+di, j+dj, k+dk]
@@ -115,12 +125,14 @@ def get_occupied_neighbors(voxels, i, j, k):
     return count
 
 def remove_points(voxels, points):
+    """Set every voxel in points to be empty within voxels"""
     for i, j, k in points:
         voxels[i, j, k]["r"] = 0
         voxels[i, j, k]["g"] = 0
         voxels[i, j, k]["b"] = 0
 
 def compute_voxel_faces(voxels, i, j, k):
+    """Return a list of exposed faces for the voxel at i,j,k"""
     exposed_faces = []
     for di, dj, dk in get_neighbor_offsets(voxels, i, j, k):
         v = voxels[i + di, j + dj, k + dk]
@@ -137,11 +149,12 @@ def compute_voxel_faces(voxels, i, j, k):
     return exposed_faces
 
 def compute_surface(voxels):
+    """Compute surface voxels, output faces to render, and return surface and face count"""
     voxel_count = 0
     faces_to_render = []
     remove_set = set()
     for i, j, k in np.ndindex(voxels.shape):
-        if i % 10 == 0: print(f"{i + 1}/100")
+        if i % 10 == 0: print(f"\r{i+1}/{voxels.shape[0]}", end="")
         # Check neighboring voxels
         neighbors = get_occupied_neighbors(voxels, i, j, k)
         v = voxels[i, j, k]
@@ -152,6 +165,7 @@ def compute_surface(voxels):
             remove_set.add((i, j, k))
 
     # remove voxels not in surface
+    print(f"\r{voxels.shape[0]}/{voxels.shape[0]}")
     remove_points(voxels, remove_set)
     return (
         np.array(faces_to_render, dtype=voxel_dtype),
@@ -173,6 +187,7 @@ def pad_with_empty(voxels):
     return padded_voxels
 
 def compute_spatial_gradient(voxels):
+    """Calculate channel-wise gradient based on bounding box"""
     # compute bounds
     min_bound = tuple(voxels[0, 0, 0][["x", "y", "z"]])
     max_bound = tuple(voxels[-1, -1, -1][["x", "y", "z"]])
@@ -188,6 +203,7 @@ def compute_spatial_gradient(voxels):
             voxels[i, j, k]["b"] = 255 * (z-min_bound[2]) / (max_bound[2]-min_bound[2])
 
 def world_to_grid(voxels, world_point):
+    """Convert world coordinate to voxel grid coordinate"""
     # get corner voxels
     lower_corner = np.array(tuple(voxels[0, 0, 0][["x", "y", "z"]]), dtype=float)
     upper_corner = np.array(tuple(voxels[-1, -1, -1][["x", "y", "z"]]), dtype=float)
@@ -200,6 +216,7 @@ def world_to_grid(voxels, world_point):
     return np.rint((world_point - lower_corner)/voxel_size).astype(int)
 
 def is_visible(voxels, voxel_center, camera_center):
+    """Determine whether a voxel is visible to a given camera"""
     # find the direction from voxel to cam
     direction = camera_center-voxel_center
     distance = np.linalg.norm(direction)
@@ -226,6 +243,7 @@ def is_visible(voxels, voxel_center, camera_center):
     return True # no occlusion found
 
 def get_camera_center(P):
+    """Find the center point of a camera given P"""
     # solve equation Pc = 0
     _, _, Vt = np.linalg.svd(P)
     c = Vt[-1]  # last row of V^T is nullspace
@@ -233,9 +251,10 @@ def get_camera_center(P):
     return c
 
 def true_coloring(voxels, images, projections):
+    """Calculate color values based on image data"""
     assert len(images) == len(projections), "Unequal number of images and projections!"
     for i, j, k in np.ndindex(voxels.shape):
-        if i % 10 == 0: print(f"{i+1}/100")
+        if i % 10 == 0: print(f"\r{i+1}/{voxels.shape[0]}", end="")
         visible_colors = []
         v = voxels[i, j, k]
         if (v["r"], v["g"], v["b"]) == (0, 0, 0): # if empty voxel dont color
@@ -257,7 +276,10 @@ def true_coloring(voxels, images, projections):
             voxels[i, j, k]["g"] = g
             voxels[i, j, k]["b"] = b
 
+    print(f"\r{voxels.shape[0]}/{voxels.shape[0]}")
+
 def write_ply(voxels, file_name, count):
+    """Write all point data to PLY file"""
     with open(file_name, mode='w') as f:
         # Write header
         f.write("ply\n")
@@ -278,13 +300,27 @@ def write_ply(voxels, file_name, count):
 
 images = load_images(imgs)
 sil = get_silhouettes(imgs)
-np.set_printoptions(suppress=True)
 proj = get_projections(imgs)
-v = setup_voxels((5,5,5), voxels_per_side=100)
+print("Creating Voxel Grid...")
+v = setup_voxels((5,6,2.5), (0, 0, 1.25), voxels_per_side=100)
+print("Constructing Visual Hull...")
 v_occupied = construct_model(v, sil, proj)
-v_padded = pad_with_empty(v)
-#compute_spatial_gradient(v_padded)
-true_coloring(v_padded, images, proj)
-faces, surface_count, face_count = compute_surface(v_padded)
+print(f"Total Voxels In Hull: {v_occupied}/{100**3}")
+# v = setup_voxels((1, 1, 1), voxels_per_side=100)
+# v["r"] = 255
+v_padded_spatial = pad_with_empty(v)
+v_padded_true = pad_with_empty(v)
+print("Computing Spatial Gradient...")
+compute_spatial_gradient(v_padded_spatial)
+print("Computing True Coloring...")
+true_coloring(v_padded_true, images, proj)
+print("Computing Surface for Model 1...")
+faces, _, face_count = compute_surface(v_padded_spatial)
+print("Writing Model 1...")
+write_ply(faces, "../out/spatial_grad.ply", face_count)
+print("Computing Surface for Model 2...")
+faces, surface_count, face_count = compute_surface(v_padded_true)
+print("Writing Model 2...")
 write_ply(faces, "../out/true_colors.ply", face_count)
-
+print(f"Total Surface Voxels: {surface_count}/{100**3}")
+print(f"Total 3D Points: {face_count}/{100**3}")
