@@ -187,6 +187,75 @@ def compute_spatial_gradient(voxels):
             voxels[i, j, k]["g"] = 255 * (y-min_bound[1]) / (max_bound[1]-min_bound[1])
             voxels[i, j, k]["b"] = 255 * (z-min_bound[2]) / (max_bound[2]-min_bound[2])
 
+def world_to_grid(voxels, world_point):
+    # get corner voxels
+    lower_corner = np.array(tuple(voxels[0, 0, 0][["x", "y", "z"]]), dtype=float)
+    upper_corner = np.array(tuple(voxels[-1, -1, -1][["x", "y", "z"]]), dtype=float)
+    # get voxel size
+    n = voxels.shape[0]
+    voxel_size = (upper_corner-lower_corner)/(n-1)
+    # adjust corner to absolute corner
+    lower_corner -= voxel_size/2
+    # round to nearest voxel
+    return np.rint((world_point - lower_corner)/voxel_size).astype(int)
+
+def is_visible(voxels, voxel_center, camera_center):
+    # find the direction from voxel to cam
+    direction = camera_center-voxel_center
+    distance = np.linalg.norm(direction)
+    direction /= distance
+    # get voxel size
+    lower_corner = np.array(tuple(voxels[0, 0, 0][["x", "y", "z"]]), dtype=float)
+    upper_corner = np.array(tuple(voxels[-1, -1, -1][["x", "y", "z"]]), dtype=float)
+    n = voxels.shape[0]
+    voxel_size = (upper_corner - lower_corner) / (n - 1)
+    # start raycast
+    step = np.linalg.norm(voxel_size)
+    t = step
+    while t < distance:
+        current_point = voxel_center + t * direction
+        i, j, k = world_to_grid(voxels, current_point)
+        if 0 <= i < voxels.shape[0] and \
+           0 <= j < voxels.shape[1] and \
+           0 <= k < voxels.shape[2]:
+            v = voxels[i, j, k]
+            if (v["r"], v["g"], v["b"]) != (0, 0, 0): # occupied voxel
+                return False # voxel is occluded
+        t += step
+
+    return True # no occlusion found
+
+def get_camera_center(P):
+    # solve equation Pc = 0
+    _, _, Vt = np.linalg.svd(P)
+    c = Vt[-1]  # last row of V^T is nullspace
+    c = c[:3] / c[3]  # convert to 3D in Euclidean coords
+    return c
+
+def true_coloring(voxels, images, projections):
+    assert len(images) == len(projections), "Unequal number of images and projections!"
+    for i, j, k in np.ndindex(voxels.shape):
+        if i % 10 == 0: print(f"{i+1}/100")
+        visible_colors = []
+        v = voxels[i, j, k]
+        if (v["r"], v["g"], v["b"]) == (0, 0, 0): # if empty voxel dont color
+            continue
+        voxel_center = np.array([v["x"], v["y"], v["z"]])
+        for img, P in zip(images, projections):
+            cam_center = get_camera_center(P)
+            if is_visible(voxels, voxel_center, cam_center):
+                x, y = project_voxel(v, P)
+                try:
+                    visible_colors.append(img[y, x])
+                except IndexError:
+                    pass
+        # take median of colors of these images
+        if len(visible_colors) > 0:
+            b, g, r = np.median(np.array(visible_colors), axis=0).astype(np.uint8)
+            # set the corresponding colors
+            voxels[i, j, k]["r"] = r
+            voxels[i, j, k]["g"] = g
+            voxels[i, j, k]["b"] = b
 
 def write_ply(voxels, file_name, count):
     with open(file_name, mode='w') as f:
@@ -207,13 +276,15 @@ def write_ply(voxels, file_name, count):
             if (voxel["r"], voxel["g"], voxel["b"]) != (0, 0, 0):
                 f.write(f"{voxel['x']} {voxel['y']} {voxel['z']} {voxel['r']} {voxel['g']} {voxel['b']}\n")
 
+images = load_images(imgs)
 sil = get_silhouettes(imgs)
 np.set_printoptions(suppress=True)
 proj = get_projections(imgs)
 v = setup_voxels((5,5,5), voxels_per_side=100)
 v_occupied = construct_model(v, sil, proj)
 v_padded = pad_with_empty(v)
-compute_spatial_gradient(v_padded)
+#compute_spatial_gradient(v_padded)
+true_coloring(v_padded, images, proj)
 faces, surface_count, face_count = compute_surface(v_padded)
-write_ply(faces, "../out/spatial_grad.ply", face_count)
+write_ply(faces, "../out/true_colors.ply", face_count)
 
